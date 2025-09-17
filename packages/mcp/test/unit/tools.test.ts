@@ -17,8 +17,14 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
 import { RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { McpProvider, McpTool, ReleaseState, Toolset } from '@salesforce/mcp-provider-api';
 import { addTool, enableTool, enableTools, disableTool, getToolStatus, listAllTools } from '../../src/utils/tools.js';
 import Cache from '../../src/utils/cache.js';
+import { registerToolsets } from '../../src/utils/registry-utils.js';
+import { disposeSession } from '../../src/index.js';
+import { Services } from '../../src/services.js';
+import { SfMcpServer } from '../../src/sf-mcp-server.js';
 
 describe('Tool Management', () => {
   let sandbox: sinon.SinonSandbox;
@@ -412,6 +418,115 @@ describe('Tool Management', () => {
         expect(result.success).to.be.false;
         expect(result.message).to.include('is already disabled');
       });
+    });
+  });
+
+  describe('Session lifecycle', () => {
+    it('should dispose tools for a session and allow re-registration', async () => {
+      const sessionOne = 'session-one';
+      const sessionTwo = 'session-two';
+      const toolName = 'session-tool';
+
+      const registeredTools = new Map<string, RegisteredTool & { remove: sinon.SinonStub }>();
+
+      const registerToolStub = sandbox.stub().callsFake((name: string) => {
+        if (registeredTools.has(name)) {
+          throw new Error(`Tool ${name} is already registered`);
+        }
+
+        const registeredTool = {
+          title: name,
+          description: 'Session scoped tool',
+          inputSchema: undefined,
+          outputSchema: undefined,
+          annotations: undefined,
+          callback: sandbox.stub(),
+          enabled: true,
+          enable: sandbox.stub(),
+          disable: sandbox.stub(),
+          update: sandbox.stub(),
+          remove: sandbox.stub(),
+        } as unknown as RegisteredTool & { remove: sinon.SinonStub };
+
+        registeredTool.remove.callsFake(() => {
+          registeredTools.delete(name);
+        });
+
+        registeredTools.set(name, registeredTool);
+        return registeredTool;
+      });
+
+      const server = {
+        registerTool: registerToolStub,
+      } as unknown as SfMcpServer;
+
+      class SessionTestTool extends McpTool {
+        public constructor(private readonly sessionToolName: string) {
+          super();
+        }
+
+        public getReleaseState(): ReleaseState {
+          return ReleaseState.GA;
+        }
+
+        public getToolsets(): Toolset[] {
+          return [Toolset.CORE];
+        }
+
+        public getName(): string {
+          return this.sessionToolName;
+        }
+
+        public getConfig() {
+          return {
+            description: 'Session lifecycle test tool',
+          };
+        }
+
+        public async exec(): Promise<CallToolResult> {
+          return { isError: false, content: [] };
+        }
+      }
+
+      class SessionTestProvider extends McpProvider {
+        public constructor(private readonly sessionToolName: string) {
+          super();
+        }
+
+        public override getName(): string {
+          return 'session-provider';
+        }
+
+        public override async provideTools(): Promise<McpTool[]> {
+          return [new SessionTestTool(this.sessionToolName)];
+        }
+      }
+
+      const services = new Services({
+        telemetry: undefined,
+        dataDir: '',
+        startupFlags: { 'allow-non-ga-tools': false, debug: false },
+      });
+
+      const provider = new SessionTestProvider(toolName);
+
+      await registerToolsets(['all'], false, false, server, services, sessionOne, [provider]);
+
+      const firstRegisteredTool = registeredTools.get(toolName) as RegisteredTool & { remove: sinon.SinonStub };
+
+      expect(firstRegisteredTool, 'tool should register for the first session').to.not.be.undefined;
+      expect(registerToolStub.callCount).to.equal(1);
+      expect(await Cache.getToolsForSession(sessionOne)).to.have.length(1);
+
+      await disposeSession(sessionOne);
+
+      expect(firstRegisteredTool.remove.callCount).to.equal(1);
+      expect(await Cache.getToolsForSession(sessionOne)).to.be.empty;
+
+      await registerToolsets(['all'], false, false, server, services, sessionTwo, [provider]);
+
+      expect(registerToolStub.callCount).to.equal(2);
+      expect(registeredTools.has(toolName)).to.be.true;
     });
   });
 });

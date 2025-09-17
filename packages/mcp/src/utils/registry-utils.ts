@@ -35,13 +35,15 @@ export async function registerToolsets(
   useDynamicTools: boolean,
   allowNonGaTools: boolean,
   server: SfMcpServer,
-  services: Services
+  services: Services,
+  sessionId?: string,
+  providers: McpProvider[] = MCP_PROVIDER_REGISTRY
 ): Promise<void> {
   if (useDynamicTools) {
     const dynamicTools = createDynamicServerTools(server);
     ux.stderr('Registering dynamic tools.');
     // eslint-disable-next-line no-await-in-loop
-    await registerTools(dynamicTools, server, useDynamicTools, allowNonGaTools);
+    await registerTools(dynamicTools, server, useDynamicTools, allowNonGaTools, sessionId);
   } else {
     ux.stderr('Skipping registration of dynamic tools.');
   }
@@ -51,7 +53,7 @@ export async function registerToolsets(
     : new Set([Toolset.CORE, ...(toolsets as Toolset[])]);
 
   const newToolRegistry: Record<Toolset, McpTool[]> = await createToolRegistryFromProviders(
-    MCP_PROVIDER_REGISTRY,
+    providers,
     services
   );
 
@@ -59,7 +61,7 @@ export async function registerToolsets(
     if (toolsetsToEnable.has(toolset)) {
       ux.stderr(`Registering tools from the '${toolset}' toolset.`);
       // eslint-disable-next-line no-await-in-loop
-      await registerTools(newToolRegistry[toolset], server, useDynamicTools, allowNonGaTools);
+      await registerTools(newToolRegistry[toolset], server, useDynamicTools, allowNonGaTools, sessionId);
     } else {
       ux.stderr(`Skipping registration of the tools from the '${toolset}' toolset.`);
     }
@@ -70,7 +72,8 @@ async function registerTools(
   tools: McpTool[],
   server: SfMcpServer,
   useDynamicTools: boolean,
-  allowNonGaTools: boolean
+  allowNonGaTools: boolean,
+  sessionId?: string
 ): Promise<void> {
   for (const tool of tools) {
     if (!allowNonGaTools && tool.getReleaseState() === ReleaseState.NON_GA) {
@@ -95,7 +98,7 @@ async function registerTools(
       ux.stderr(`* Registering tool '${tool.getName()}'.`);
     }
     // eslint-disable-next-line no-await-in-loop
-    await addTool(registeredTool, tool.getName());
+    await addTool(registeredTool, tool.getName(), sessionId);
   }
 }
 

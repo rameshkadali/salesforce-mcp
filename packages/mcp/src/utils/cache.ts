@@ -20,6 +20,7 @@ import { ToolInfo } from './types.js';
 type CacheContents = {
   allowedOrgs: Set<string>;
   tools: ToolInfo[];
+  toolSessions: Map<string, ToolInfo[]>;
 };
 
 type ValueOf<T> = T[keyof T];
@@ -94,5 +95,62 @@ export default class Cache extends Map<keyof CacheContents, ValueOf<CacheContent
   private initialize(): void {
     this.set('allowedOrgs', new Set<string>());
     this.set('tools', []);
+    this.set('toolSessions', new Map<string, ToolInfo[]>());
+  }
+
+  public static async addToolToSession(sessionId: string, toolInfo: ToolInfo): Promise<void> {
+    const cache = Cache.getInstance();
+
+    await Cache.mutex.lock(() => {
+      const sessions = cache.get('toolSessions');
+      const existingTools = sessions.get(sessionId) ?? [];
+      sessions.set(sessionId, [...existingTools, toolInfo]);
+    });
+  }
+
+  public static async getToolsForSession(sessionId: string): Promise<ToolInfo[]> {
+    const cache = Cache.getInstance();
+
+    return Cache.mutex.lock(() => {
+      const sessions = cache.get('toolSessions');
+      const sessionTools = sessions.get(sessionId);
+      return sessionTools ? [...sessionTools] : [];
+    });
+  }
+
+  public static async deleteToolSession(sessionId: string): Promise<void> {
+    const cache = Cache.getInstance();
+
+    await Cache.mutex.lock(() => {
+      const sessions = cache.get('toolSessions');
+      const sessionTools = sessions.get(sessionId);
+
+      sessions.delete(sessionId);
+
+      if (!sessionTools || sessionTools.length === 0) {
+        return;
+      }
+
+      const namesToRemove = new Set(sessionTools.map((toolInfo) => toolInfo.name));
+
+      for (const tools of sessions.values()) {
+        for (const toolInfo of tools) {
+          namesToRemove.delete(toolInfo.name);
+          if (namesToRemove.size === 0) {
+            break;
+          }
+        }
+        if (namesToRemove.size === 0) {
+          break;
+        }
+      }
+
+      if (namesToRemove.size > 0) {
+        const remainingTools = cache
+          .get('tools')
+          .filter((toolInfo) => !namesToRemove.has(toolInfo.name));
+        cache.set('tools', remainingTools);
+      }
+    });
   }
 }
