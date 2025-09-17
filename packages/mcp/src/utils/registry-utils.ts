@@ -29,19 +29,23 @@ import { MCP_PROVIDER_REGISTRY } from '../registry.js';
 import { addTool, isToolRegistered } from '../utils/tools.js';
 import { Services } from '../services.js';
 import { createDynamicServerTools } from '../main-server-provider.js';
+import Cache from './cache.js';
 
 export async function registerToolsets(
   toolsets: Array<Toolset | 'all'>,
   useDynamicTools: boolean,
   allowNonGaTools: boolean,
   server: SfMcpServer,
-  services: Services
+  services: Services,
+  sessionId?: string
 ): Promise<void> {
+  const resolvedSessionId = Cache.resolveToolSessionId(sessionId);
+
   if (useDynamicTools) {
     const dynamicTools = createDynamicServerTools(server);
     ux.stderr('Registering dynamic tools.');
     // eslint-disable-next-line no-await-in-loop
-    await registerTools(dynamicTools, server, useDynamicTools, allowNonGaTools);
+    await registerTools(dynamicTools, server, useDynamicTools, allowNonGaTools, resolvedSessionId);
   } else {
     ux.stderr('Skipping registration of dynamic tools.');
   }
@@ -59,7 +63,7 @@ export async function registerToolsets(
     if (toolsetsToEnable.has(toolset)) {
       ux.stderr(`Registering tools from the '${toolset}' toolset.`);
       // eslint-disable-next-line no-await-in-loop
-      await registerTools(newToolRegistry[toolset], server, useDynamicTools, allowNonGaTools);
+      await registerTools(newToolRegistry[toolset], server, useDynamicTools, allowNonGaTools, resolvedSessionId);
     } else {
       ux.stderr(`Skipping registration of the tools from the '${toolset}' toolset.`);
     }
@@ -70,7 +74,8 @@ async function registerTools(
   tools: McpTool[],
   server: SfMcpServer,
   useDynamicTools: boolean,
-  allowNonGaTools: boolean
+  allowNonGaTools: boolean,
+  sessionId: string
 ): Promise<void> {
   for (const tool of tools) {
     if (!allowNonGaTools && tool.getReleaseState() === ReleaseState.NON_GA) {
@@ -80,7 +85,7 @@ async function registerTools(
       continue;
     }
     // eslint-disable-next-line no-await-in-loop
-    if (await isToolRegistered(tool.getName())) {
+    if (await isToolRegistered(tool.getName(), sessionId)) {
       ux.stderr(`* Skipping registration of tool '${tool.getName()}' because it is already registered.`);
       continue;
     }
@@ -95,7 +100,7 @@ async function registerTools(
       ux.stderr(`* Registering tool '${tool.getName()}'.`);
     }
     // eslint-disable-next-line no-await-in-loop
-    await addTool(registeredTool, tool.getName());
+    await addTool(registeredTool, tool.getName(), sessionId);
   }
 }
 

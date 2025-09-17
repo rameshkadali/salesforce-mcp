@@ -21,16 +21,17 @@ import Cache from './cache.js';
 /**
  * Add a tool to the cache
  */
-export async function addTool(tool: RegisteredTool, name: string): Promise<{ success: boolean; message: string }> {
-  if (await isToolRegistered(name)) {
+export async function addTool(
+  tool: RegisteredTool,
+  name: string,
+  sessionId?: string
+): Promise<{ success: boolean; message: string }> {
+  if (await isToolRegistered(name, sessionId)) {
     return { success: false, message: `Tool ${name} already exists` };
   }
 
-  await Cache.safeUpdate('tools', (toolsArray) => {
-    const newTool: ToolInfo = {
-      tool,
-      name,
-    };
+  await Cache.updateToolsForSession(sessionId, (toolsArray) => {
+    const newTool: ToolInfo = { tool, name };
 
     return [...toolsArray, newTool];
   });
@@ -44,16 +45,19 @@ export async function addTool(tool: RegisteredTool, name: string): Promise<{ suc
  * @param toolName The name of the tool to check
  * @returns True if the tool is registered, false otherwise
  */
-export async function isToolRegistered(toolName: string): Promise<boolean> {
-  const existingTools = await Cache.safeGet('tools');
+export async function isToolRegistered(toolName: string, sessionId?: string): Promise<boolean> {
+  const existingTools = await Cache.getToolsForSession(sessionId);
   return existingTools.some((t) => t.name === toolName);
 }
 
 /**
  * Enable an individual tool
  */
-export async function enableTool(toolName: string): Promise<{ success: boolean; message: string }> {
-  const tools = await Cache.safeGet('tools');
+export async function enableTool(
+  toolName: string,
+  sessionId?: string
+): Promise<{ success: boolean; message: string }> {
+  const tools = await Cache.getToolsForSession(sessionId);
   const toolInfo = tools.find((t) => t.name === toolName);
 
   if (!toolInfo) {
@@ -70,9 +74,12 @@ export async function enableTool(toolName: string): Promise<{ success: boolean; 
   return { success: true, message: `Tool ${toolName} enabled` };
 }
 
-export async function enableTools(tools: string[]): Promise<Array<{ success: boolean; message: string }>> {
+export async function enableTools(
+  tools: string[],
+  sessionId?: string
+): Promise<Array<{ success: boolean; message: string }>> {
   const results: Array<{ success: boolean; message: string }> = [];
-  const cachedTools = await Cache.safeGet('tools');
+  const cachedTools = await Cache.getToolsForSession(sessionId);
 
   for (const tool of tools) {
     const toolInfo = cachedTools.find((t) => t.name === tool);
@@ -98,8 +105,11 @@ export async function enableTools(tools: string[]): Promise<Array<{ success: boo
 /**
  * Disable an individual tool
  */
-export async function disableTool(toolName: string): Promise<{ success: boolean; message: string }> {
-  const tools = await Cache.safeGet('tools');
+export async function disableTool(
+  toolName: string,
+  sessionId?: string
+): Promise<{ success: boolean; message: string }> {
+  const tools = await Cache.getToolsForSession(sessionId);
   const toolInfo = tools.find((t) => t.name === toolName);
 
   if (!toolInfo) {
@@ -119,8 +129,11 @@ export async function disableTool(toolName: string): Promise<{ success: boolean;
 /**
  * Get individual tool status
  */
-export async function getToolStatus(toolName: string): Promise<{ enabled: boolean; description: string } | undefined> {
-  const tools = await Cache.safeGet('tools');
+export async function getToolStatus(
+  toolName: string,
+  sessionId?: string
+): Promise<{ enabled: boolean; description: string } | undefined> {
+  const tools = await Cache.getToolsForSession(sessionId);
   const toolInfo = tools.find((t) => t.name === toolName);
 
   if (!toolInfo) {
@@ -136,8 +149,10 @@ export async function getToolStatus(toolName: string): Promise<{ enabled: boolea
 /**
  * List all individual tools with their status
  */
-export async function listAllTools(): Promise<Array<{ name: string; enabled: boolean; description: string }>> {
-  const tools = await Cache.safeGet('tools');
+export async function listAllTools(
+  sessionId?: string
+): Promise<Array<{ name: string; enabled: boolean; description: string }>> {
+  const tools = await Cache.getToolsForSession(sessionId);
 
   return tools.map((toolInfo) => ({
     name: toolInfo.name,

@@ -15,7 +15,8 @@
  */
 
 import { McpTool, McpToolConfig, ReleaseState, Toolset } from '@salesforce/mcp-provider-api';
-import { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { CallToolResult, ServerNotification, ServerRequest } from '@modelcontextprotocol/sdk/types.js';
+import { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import { listAllTools } from '../utils/tools.js';
 
 export class ListToolsMcpTool extends McpTool {
@@ -55,13 +56,15 @@ Once a tool has been enabled, you do not need to call sf-list-tools again - inst
     };
   }
 
-  public async exec(): Promise<CallToolResult> {
+  public async exec(
+    extra: RequestHandlerExtra<ServerRequest, ServerNotification>
+  ): Promise<CallToolResult> {
     return {
       isError: false,
       content: [
         {
           type: 'text',
-          text: JSON.stringify(await listAllTools(), null, 2),
+          text: JSON.stringify(await listAllTools(extra.sessionId), null, 2),
         },
       ],
     };

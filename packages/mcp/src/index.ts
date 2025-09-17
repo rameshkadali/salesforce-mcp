@@ -16,7 +16,7 @@
 
 /* eslint-disable no-console */
 
-import { TOOLSETS } from '@salesforce/mcp-provider-api';
+import { TOOLSETS, Toolset } from '@salesforce/mcp-provider-api';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { Command, Flags, ux } from '@oclif/core';
 import Cache from './utils/cache.js';
@@ -43,6 +43,15 @@ function sanitizeOrgInput(input: string[]): string {
     })
     .join(', ');
 }
+
+type SessionInitializationOptions = {
+  sessionId: string;
+  server: SfMcpServer;
+  services: Services;
+  toolsets: Array<Toolset | 'all'>;
+  dynamicTools: boolean;
+  allowNonGaTools: boolean;
+};
 
 export default class McpServerCommand extends Command {
   public static summary = 'Start the Salesforce MCP server';
@@ -140,9 +149,14 @@ You can also use special values to control access to orgs:
 
       await this.telemetry.start();
 
-      process.stdin.on('close', (err) => {
+      process.stdin.on('close', async (err) => {
         this.telemetry?.sendEvent(err ? 'SERVER_STOPPED_ERROR' : 'SERVER_STOPPED_SUCCESS');
         this.telemetry?.stop();
+        try {
+          await this.disposeSession(Cache.DEFAULT_TOOL_SESSION_ID);
+        } catch (disposeError) {
+          this.logToStderr(`Error cleaning up session: ${(disposeError as Error).message}`);
+        }
       });
     }
 
@@ -173,17 +187,41 @@ You can also use special values to control access to orgs:
       },
     });
 
-    await registerToolsets(
-      flags.toolsets ?? ['all'],
-      flags['dynamic-tools'] ?? false,
-      flags['allow-non-ga-tools'] ?? false,
+    const sessionId = Cache.DEFAULT_TOOL_SESSION_ID;
+
+    await this.initializeSession({
+      sessionId,
       server,
-      services
-    );
+      services,
+      toolsets: flags.toolsets ?? ['all'],
+      dynamicTools: flags['dynamic-tools'] ?? false,
+      allowNonGaTools: flags['allow-non-ga-tools'] ?? false,
+    });
 
     const transport = new StdioServerTransport();
+    transport.onclose = () => {
+      void this.disposeSession(sessionId).catch((error: Error) => {
+        this.logToStderr(`Error cleaning up session: ${error.message}`);
+      });
+    };
     await server.connect(transport);
     console.error(`✅ Salesforce MCP Server v${this.config.version} running on stdio`);
+  }
+
+  private async initializeSession({
+    sessionId,
+    server,
+    services,
+    toolsets,
+    dynamicTools,
+    allowNonGaTools,
+  }: SessionInitializationOptions): Promise<void> {
+    await Cache.resetToolsForSession(sessionId);
+    await registerToolsets(toolsets, dynamicTools, allowNonGaTools, server, services, sessionId);
+  }
+
+  private async disposeSession(sessionId: string): Promise<void> {
+    await Cache.deleteToolSession(sessionId);
   }
 
   protected async catch(error: Error): Promise<void> {
