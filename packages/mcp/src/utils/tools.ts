@@ -21,19 +21,25 @@ import Cache from './cache.js';
 /**
  * Add a tool to the cache
  */
-export async function addTool(tool: RegisteredTool, name: string): Promise<{ success: boolean; message: string }> {
+export async function addTool(
+  tool: RegisteredTool,
+  name: string,
+  sessionId?: string
+): Promise<{ success: boolean; message: string }> {
   if (await isToolRegistered(name)) {
     return { success: false, message: `Tool ${name} already exists` };
   }
 
-  await Cache.safeUpdate('tools', (toolsArray) => {
-    const newTool: ToolInfo = {
-      tool,
-      name,
-    };
+  const newTool: ToolInfo = {
+    tool,
+    name,
+  };
 
-    return [...toolsArray, newTool];
-  });
+  await Cache.safeUpdate('tools', (toolsArray) => [...toolsArray, newTool]);
+
+  if (sessionId) {
+    await Cache.addToolToSession(sessionId, newTool);
+  }
 
   return { success: true, message: `Added tool ${name}` };
 }

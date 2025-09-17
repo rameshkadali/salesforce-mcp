@@ -200,3 +200,19 @@ You can also use special values to control access to orgs:
     await super.catch(error);
   }
 }
+
+export async function disposeSession(sessionId: string): Promise<void> {
+  const toolsForSession = await Cache.getToolsForSession(sessionId);
+
+  try {
+    for (const { tool, name } of toolsForSession) {
+      try {
+        tool.remove();
+      } catch (error) {
+        console.error(`Failed to remove tool '${name}' for session '${sessionId}':`, error);
+      }
+    }
+  } finally {
+    await Cache.deleteToolSession(sessionId);
+  }
+}
