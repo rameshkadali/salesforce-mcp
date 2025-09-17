@@ -68,12 +68,14 @@ describe('Cache', () => {
       expect(allowedOrgs.size).to.equal(0);
     });
 
-    it('should initialize with empty tools array', () => {
+    it('should initialize with empty tool map', () => {
       const cache = Cache.getInstance();
       const tools = cache.get('tools');
 
-      expect(tools).to.be.an('array');
-      expect(tools).to.have.length(0);
+      expect(tools).to.be.instanceOf(Map);
+      expect(tools.size).to.equal(1);
+      const defaultSessionTools = tools.get(Cache.DEFAULT_TOOL_SESSION_ID);
+      expect(defaultSessionTools).to.be.an('array').that.is.empty;
     });
   });
 
@@ -103,14 +105,15 @@ describe('Cache', () => {
         name: 'test-tool',
       };
 
-      cache.set('tools', [testToolInfo]);
+      cache.set('tools', new Map([[Cache.DEFAULT_TOOL_SESSION_ID, [testToolInfo]]]));
 
       const result = await Cache.safeGet('tools');
 
-      expect(result).to.be.an('array');
-      expect(result).to.have.length(1);
-      expect(result[0].name).to.equal('test-tool');
-      expect(result[0].tool).to.equal(mockTool);
+      expect(result).to.be.instanceOf(Map);
+      const sessionTools = result.get(Cache.DEFAULT_TOOL_SESSION_ID);
+      expect(sessionTools).to.have.length(1);
+      expect(sessionTools?.[0]?.name).to.equal('test-tool');
+      expect(sessionTools?.[0]?.tool).to.equal(mockTool);
     });
   });
 
@@ -142,10 +145,15 @@ describe('Cache', () => {
         enabled: true,
       } as unknown as RegisteredTool;
 
-      const newTools: ToolInfo[] = [
-        { tool: mockTool1, name: 'tool1' },
-        { tool: mockTool2, name: 'tool2' },
-      ];
+      const newTools = new Map<string, ToolInfo[]>([
+        [
+          Cache.DEFAULT_TOOL_SESSION_ID,
+          [
+            { tool: mockTool1, name: 'tool1' },
+            { tool: mockTool2, name: 'tool2' },
+          ],
+        ],
+      ]);
 
       await Cache.safeSet('tools', newTools);
 
@@ -153,9 +161,10 @@ describe('Cache', () => {
       const result = cache.get('tools');
 
       expect(result).to.equal(newTools);
-      expect(result).to.have.length(2);
-      expect(result[0].name).to.equal('tool1');
-      expect(result[1].name).to.equal('tool2');
+      const sessionTools = result.get(Cache.DEFAULT_TOOL_SESSION_ID);
+      expect(sessionTools).to.have.length(2);
+      expect(sessionTools?.[0]?.name).to.equal('tool1');
+      expect(sessionTools?.[1]?.name).to.equal('tool2');
     });
   });
 
@@ -189,19 +198,23 @@ describe('Cache', () => {
         enabled: false,
       } as unknown as RegisteredTool;
 
-      const result = await Cache.safeUpdate('tools', (currentTools) => [
-        ...currentTools,
-        { tool: mockTool, name: 'new-tool' },
-      ]);
+      const result = await Cache.safeUpdate('tools', (currentTools) => {
+        const updated = new Map(currentTools);
+        const sessionTools = updated.get(Cache.DEFAULT_TOOL_SESSION_ID) ?? [];
+        updated.set(Cache.DEFAULT_TOOL_SESSION_ID, [...sessionTools, { tool: mockTool, name: 'new-tool' }]);
+        return updated;
+      });
 
-      expect(result).to.have.length(1);
-      expect(result[0].name).to.equal('new-tool');
-      expect(result[0].tool).to.equal(mockTool);
+      const updatedTools = result.get(Cache.DEFAULT_TOOL_SESSION_ID) ?? [];
+      expect(updatedTools).to.have.length(1);
+      expect(updatedTools[0].name).to.equal('new-tool');
+      expect(updatedTools[0].tool).to.equal(mockTool);
 
       // Verify the change persisted
       const persistedTools = await Cache.safeGet('tools');
-      expect(persistedTools).to.have.length(1);
-      expect(persistedTools[0].name).to.equal('new-tool');
+      const persistedDefaultTools = persistedTools.get(Cache.DEFAULT_TOOL_SESSION_ID) ?? [];
+      expect(persistedDefaultTools).to.have.length(1);
+      expect(persistedDefaultTools[0].name).to.equal('new-tool');
     });
 
     it('should return the updated value', async () => {
@@ -313,9 +326,11 @@ describe('Cache', () => {
     });
 
     it('should handle concurrent tool operations without corruption', async () => {
-      // Create concurrent operations on the tools array
+      // Create concurrent operations on the tools map
       const promises = Array.from({ length: 15 }, (_, index) =>
         Cache.safeUpdate('tools', (currentTools) => {
+          const updated = new Map(currentTools);
+          const existing = updated.get(Cache.DEFAULT_TOOL_SESSION_ID) ?? [];
           const mockTool = {
             name: `concurrent-tool-${index}`,
             enable: sandbox.stub(),
@@ -323,13 +338,19 @@ describe('Cache', () => {
             enabled: index % 2 === 0,
           } as unknown as RegisteredTool;
 
-          return [...currentTools, { tool: mockTool, name: `concurrent-tool-${index}` }];
+          updated.set(Cache.DEFAULT_TOOL_SESSION_ID, [
+            ...existing,
+            { tool: mockTool, name: `concurrent-tool-${index}` },
+          ]);
+
+          return updated;
         })
       );
 
       await Promise.all(promises);
 
-      const finalTools = await Cache.safeGet('tools');
+      const finalToolsMap = await Cache.safeGet('tools');
+      const finalTools = finalToolsMap.get(Cache.DEFAULT_TOOL_SESSION_ID) ?? [];
 
       // Should have all 15 tools
       expect(finalTools).to.have.length(15);
@@ -362,8 +383,9 @@ describe('Cache', () => {
       const tools = firstInstance.get('tools');
 
       expect(allowedOrgs).to.be.instanceOf(Set);
-      expect(tools).to.be.an('array');
-      expect(tools).to.have.length(0);
+      expect(tools).to.be.instanceOf(Map);
+      const defaultTools = tools.get(Cache.DEFAULT_TOOL_SESSION_ID);
+      expect(defaultTools).to.be.an('array').that.is.empty;
     });
   });
 
@@ -410,13 +432,14 @@ describe('Cache', () => {
         enabled: false,
       } as unknown as RegisteredTool;
 
-      const tools: ToolInfo[] = [{ tool: mockTool, name: 'test-tool' }];
+      const tools = new Map<string, ToolInfo[]>([[Cache.DEFAULT_TOOL_SESSION_ID, [{ tool: mockTool, name: 'test-tool' }]]]);
       await Cache.safeSet('tools', tools);
 
       const retrieved = await Cache.safeGet('tools');
-      expect(retrieved).to.be.an('array');
+      expect(retrieved).to.be.instanceOf(Map);
 
-      const testTool = retrieved[0];
+      const defaultTools = retrieved.get(Cache.DEFAULT_TOOL_SESSION_ID) ?? [];
+      const testTool = defaultTools[0];
       expect(testTool).to.exist;
       expect(typeof testTool.name).to.equal('string');
       expect(testTool.tool).to.equal(mockTool);

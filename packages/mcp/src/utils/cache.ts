@@ -17,9 +17,11 @@
 import { Mutex } from '@salesforce/core';
 import { ToolInfo } from './types.js';
 
+type ToolCache = Map<string, ToolInfo[]>;
+
 type CacheContents = {
   allowedOrgs: Set<string>;
-  tools: ToolInfo[];
+  tools: ToolCache;
 };
 
 type ValueOf<T> = T[keyof T];
@@ -33,6 +35,8 @@ export default class Cache extends Map<keyof CacheContents, ValueOf<CacheContent
 
   // Mutex for thread-safe cache operations
   private static mutex = new Mutex();
+
+  public static readonly DEFAULT_TOOL_SESSION_ID = 'default';
 
   private constructor() {
     super();
@@ -93,6 +97,70 @@ export default class Cache extends Map<keyof CacheContents, ValueOf<CacheContent
 
   private initialize(): void {
     this.set('allowedOrgs', new Set<string>());
-    this.set('tools', []);
+    this.set('tools', new Map<string, ToolInfo[]>([[Cache.DEFAULT_TOOL_SESSION_ID, []]]));
+  }
+
+  public static resolveToolSessionId(sessionId?: string): string {
+    return sessionId ?? Cache.DEFAULT_TOOL_SESSION_ID;
+  }
+
+  public static async ensureToolSession(sessionId?: string): Promise<void> {
+    const resolvedSessionId = Cache.resolveToolSessionId(sessionId);
+    await Cache.safeUpdate('tools', (toolMap) => {
+      if (toolMap.has(resolvedSessionId)) {
+        return toolMap;
+      }
+
+      const updated = new Map(toolMap);
+      updated.set(resolvedSessionId, []);
+      return updated;
+    });
+  }
+
+  public static async resetToolsForSession(sessionId?: string): Promise<void> {
+    const resolvedSessionId = Cache.resolveToolSessionId(sessionId);
+    await Cache.safeUpdate('tools', (toolMap) => {
+      const updated = new Map(toolMap);
+      updated.set(resolvedSessionId, []);
+      return updated;
+    });
+  }
+
+  public static async deleteToolSession(sessionId?: string): Promise<void> {
+    const resolvedSessionId = Cache.resolveToolSessionId(sessionId);
+    await Cache.safeUpdate('tools', (toolMap) => {
+      if (!toolMap.has(resolvedSessionId)) {
+        return toolMap;
+      }
+
+      const updated = new Map(toolMap);
+      updated.delete(resolvedSessionId);
+      return updated;
+    });
+  }
+
+  public static async getToolsForSession(sessionId?: string): Promise<ToolInfo[]> {
+    const resolvedSessionId = Cache.resolveToolSessionId(sessionId);
+    const toolMap = await Cache.safeGet('tools');
+    const tools = toolMap.get(resolvedSessionId) ?? [];
+    return [...tools];
+  }
+
+  public static async updateToolsForSession(
+    sessionId: string | undefined,
+    updateFn: (tools: ToolInfo[]) => ToolInfo[]
+  ): Promise<ToolInfo[]> {
+    const resolvedSessionId = Cache.resolveToolSessionId(sessionId);
+    let updatedTools: ToolInfo[] = [];
+
+    await Cache.safeUpdate('tools', (toolMap) => {
+      const existingTools = toolMap.get(resolvedSessionId) ?? [];
+      updatedTools = updateFn([...existingTools]);
+      const updatedMap = new Map(toolMap);
+      updatedMap.set(resolvedSessionId, updatedTools);
+      return updatedMap;
+    });
+
+    return updatedTools;
   }
 }

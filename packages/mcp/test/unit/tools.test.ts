@@ -68,8 +68,7 @@ describe('Tool Management', () => {
         expect(result.message).to.equal('Added tool test-tool');
 
         // Verify the tool was added to cache
-        const cache = Cache.getInstance();
-        const tools = cache.get('tools');
+        const tools = await Cache.getToolsForSession();
         expect(tools).to.have.length(1);
         expect(tools[0].name).to.equal('test-tool');
         expect(tools[0].tool).to.equal(mockTool);
@@ -340,6 +339,94 @@ describe('Tool Management', () => {
     });
   });
 
+  describe('Session isolation', () => {
+    const createTool = (name: string): RegisteredTool & { enabled: boolean } => {
+      const tool = {
+        enable: sandbox.stub(),
+        disable: sandbox.stub(),
+        name,
+        description: `${name} description`,
+        inputSchema: {},
+        handler: sandbox.stub(),
+        enabled: false,
+        callback: sandbox.stub(),
+        update: sandbox.stub(),
+        remove: sandbox.stub(),
+      } as unknown as RegisteredTool & { enabled: boolean };
+
+      (tool.enable as sinon.SinonStub).callsFake(() => {
+        tool.enabled = true;
+      });
+      (tool.disable as sinon.SinonStub).callsFake(() => {
+        tool.enabled = false;
+      });
+
+      return tool;
+    };
+
+    it('should isolate tool registration per session', async () => {
+      const sessionA = 'session-a';
+      const sessionB = 'session-b';
+      const toolA = createTool('shared-tool');
+      const toolB = createTool('shared-tool');
+
+      const firstAdd = await addTool(toolA, 'shared-tool', sessionA);
+      const secondAdd = await addTool(toolB, 'shared-tool', sessionB);
+
+      expect(firstAdd.success).to.be.true;
+      expect(secondAdd.success).to.be.true;
+
+      const sessionATools = await Cache.getToolsForSession(sessionA);
+      const sessionBTools = await Cache.getToolsForSession(sessionB);
+
+      expect(sessionATools).to.have.length(1);
+      expect(sessionATools[0].tool).to.equal(toolA);
+      expect(sessionBTools).to.have.length(1);
+      expect(sessionBTools[0].tool).to.equal(toolB);
+    });
+
+    it('should scope tool enablement per session', async () => {
+      const sessionA = 'session-a';
+      const sessionB = 'session-b';
+      const toolA = createTool('shared-tool');
+      const toolB = createTool('shared-tool');
+
+      await addTool(toolA, 'shared-tool', sessionA);
+      await addTool(toolB, 'shared-tool', sessionB);
+
+      await enableTool('shared-tool', sessionA);
+
+      const statusA = await getToolStatus('shared-tool', sessionA);
+      const statusB = await getToolStatus('shared-tool', sessionB);
+
+      expect(statusA?.enabled).to.be.true;
+      expect(statusB?.enabled).to.be.false;
+
+      await enableTool('shared-tool', sessionB);
+      const updatedStatusB = await getToolStatus('shared-tool', sessionB);
+      expect(updatedStatusB?.enabled).to.be.true;
+    });
+
+    it('should clean up session tools on dispose', async () => {
+      const sessionId = 'session-cleanup';
+      const initialTool = createTool('cleanup');
+
+      await addTool(initialTool, 'cleanup-tool', sessionId);
+      await Cache.deleteToolSession(sessionId);
+
+      const toolsAfterDispose = await Cache.getToolsForSession(sessionId);
+      expect(toolsAfterDispose).to.have.length(0);
+
+      const newTool = createTool('cleanup');
+      const addAfterDispose = await addTool(newTool, 'cleanup-tool', sessionId);
+
+      expect(addAfterDispose.success).to.be.true;
+      const toolsAfterReadd = await Cache.getToolsForSession(sessionId);
+      expect(toolsAfterReadd).to.have.length(1);
+      expect(toolsAfterReadd[0].tool).to.equal(newTool);
+    });
+  });
+
   describe('Thread Safety', () => {
     let mockTool: RegisteredTool & { enabled: boolean };
 
@@ -377,8 +464,7 @@ describe('Tool Management', () => {
       });
 
       // Verify all tools were added
-      const cache = Cache.getInstance();
-      const tools = cache.get('tools');
+      const tools = await Cache.getToolsForSession();
       expect(tools).to.have.length(10);
     });
 

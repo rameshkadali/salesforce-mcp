@@ -16,7 +16,8 @@
 
 import { z } from 'zod';
 import { McpTool, McpToolConfig, ReleaseState, Toolset } from '@salesforce/mcp-provider-api';
-import { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { CallToolResult, ServerNotification, ServerRequest } from '@modelcontextprotocol/sdk/types.js';
+import { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import { enableTools as utilEnableTools } from '../utils/tools.js';
 import { SfMcpServer } from '../sf-mcp-server.js';
 
@@ -63,7 +64,10 @@ Once you have enabled the tool, you MUST invoke that tool to accomplish the user
     };
   }
 
-  public async exec(input: InputArgs): Promise<CallToolResult> {
+  public async exec(
+    input: InputArgs,
+    extra: RequestHandlerExtra<ServerRequest, ServerNotification>
+  ): Promise<CallToolResult> {
     if (input.tools.length === 0) {
       return {
         isError: true,
@@ -76,7 +80,7 @@ Once you have enabled the tool, you MUST invoke that tool to accomplish the user
       };
     }
 
-    const results = await utilEnableTools(input.tools);
+    const results = await utilEnableTools(input.tools, extra.sessionId);
 
     this.server.sendToolListChanged();
 
